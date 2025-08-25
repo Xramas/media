@@ -1,0 +1,35 @@
+# OS 杂项
+.DS_Store
+Thumbs.db
+
+# 日志 / 缓存 / 临时
+*.log
+*.tmp
+*.swp
+*.bak
+cache/
+tmp/
+storage/
+runtime/
+
+# PHP / Composer
+/vendor/
+composer.phar
+
+# 环境与私密
+.env
+.env.*
+config.php
+config.credentials.php
+install.lock
+
+# 前端产物（按需保留/删除）
+//dist/
+/build/
+/node_modules/
+
+# 备份/中间文件
+*.save
+*.old
+*.orig
+.aliyun/

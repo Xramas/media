@@ -1,0 +1,5 @@
+{
+    "require": {
+        "alibabacloud/vod-20170321": "^3.8"
+    }
+}
