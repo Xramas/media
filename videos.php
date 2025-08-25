@@ -1,26 +1,20 @@
 <?php
-require_once __DIR__ . '/config.php'; // 包含了新的DB和VOD逻辑
+// 文件: videos.php (更新后)
+
+// 步骤1：替换 config.php 为 init.php
+require_once __DIR__ . '/_includes/init.php'; 
+// 引入页头。注意：init.php 必须在 header.php 之前，因为 init.php 可能需要执行 header() 重定向
 require_once __DIR__ . '/_includes/header.php';
 
-// --- 辅助函数 ---
+// 步骤2：移除旧的数据库连接检查，因为 init.php 已经处理了
+// if (!$pdo) { ... } 这段代码被彻底删除
 
-/**
- * 将秒数格式化为 MM:SS 格式的字符串
- * @param float $seconds
- * @return string
- */
+// --- 辅助函数 (保持不变) ---
 function formatDuration(float $seconds): string {
     $m = floor($seconds / 60);
     $s = floor($seconds % 60);
     return sprintf('%02d:%02d', $m, $s);
 }
-
-/**
- * 渲染分页HTML的函数
- * @param int $currentPage
- * @param int $totalPages
- * @return void
- */
 function renderPagination(int $currentPage, int $totalPages): void {
     if ($totalPages <= 1) { return; }
     echo '<nav><ul class="pagination">';
@@ -38,29 +32,21 @@ function renderPagination(int $currentPage, int $totalPages): void {
     echo '</ul></nav>';
 }
 
-// --- 主要逻辑 ---
 
-$pdo = Database::getConnection(); // 从config获取数据库连接
-if (!$pdo) {
-    // 如果无法连接数据库（通常是未安装），显示提示信息
-    die("网站配置不正确，无法连接到数据库。请先访问 <a href='install.php'>install.php</a> 完成安装。");
-}
-
+// --- 主要逻辑 (保持不变) ---
 $pageSize = 20;
 $currentPage = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 if ($currentPage < 1) { $currentPage = 1; }
 
-// 从数据库获取总数
 $totalVideos = $pdo->query("SELECT count(*) FROM videos")->fetchColumn();
 $totalPages = ceil($totalVideos / $pageSize);
 $offset = ($currentPage - 1) * $pageSize;
 
-// 从数据库获取当前页的数据 (按创建时间倒序)
 $stmt = $pdo->prepare("SELECT * FROM videos ORDER BY creation_time DESC LIMIT :limit OFFSET :offset");
 $stmt->bindValue(':limit', $pageSize, PDO::PARAM_INT);
 $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
 $stmt->execute();
-$videoList = $stmt->fetchAll(PDO::FETCH_OBJ); // 以对象形式获取，方便模板渲染
+$videoList = $stmt->fetchAll(PDO::FETCH_OBJ);
 
 $errorMessage = '';
 ?>
@@ -73,7 +59,6 @@ $errorMessage = '';
         <?php if (!empty($videoList)): ?>
             <?php foreach ($videoList as $video): ?>
                 <?php
-                    // 注意：现在字段名来自数据库 (video_id, cover_url)
                     $title = htmlspecialchars($video->title);
                     $coverUrl = !empty($video->cover_url) ? htmlspecialchars($video->cover_url) : '';
                     $duration = formatDuration($video->duration);
