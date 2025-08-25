@@ -19,7 +19,6 @@ composer.phar
 # 环境与私密
 .env
 .env.*
-config.php
 config.credentials.php
 install.lock
 
