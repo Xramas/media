@@ -1,4 +1,7 @@
-<?php require_once __DIR__ . '/_includes/header.php'; ?>
+<?php 
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/_includes/header.php'; 
+?>
 
 <title>首页 - 我的视频网站</title>
 

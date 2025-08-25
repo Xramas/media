@@ -1,59 +1,84 @@
 <?php
+// 文件: cron_sync_videos.php (专业增强版)
+
 // 此脚本为命令行 (CLI) 环境设计，超时时间设置为无限
 set_time_limit(0);
 
-// --- 增强1：引入文件锁，防止脚本重复执行 ---
+// --- 1. 定义锁文件路径和句柄 ---
 $lockFile = __DIR__ . '/cron.lock';
 $lockHandle = fopen($lockFile, 'c');
-if (!$lockHandle || !flock($lockHandle, LOCK_EX | LOCK_NB)) {
-    // 如果文件被锁定，说明有另一个实例正在运行，则直接退出
-    exit("另一个同步进程正在运行。\n");
+
+if (!$lockHandle) {
+    echo "错误：无法创建锁文件。\n";
+    exit(1);
 }
 
+// --- 2. 注册一个“必定会执行”的清理函数 ---
+// 无论脚本如何退出（正常结束、出错、被Ctrl+C中断），此函数都会被调用
+register_shutdown_function(function() use ($lockHandle, $lockFile) {
+    if ($lockHandle) {
+        flock($lockHandle, LOCK_UN); // 释放文件锁
+        fclose($lockHandle);       // 关闭文件句柄
+        unlink($lockFile);         // 删除锁文件
+        echo "\n清理完成，锁文件已移除。\n";
+    }
+});
 
-// --- 增强2：定义一个简单的日志函数 ---
-define('LOG_FILE', __DIR__ . '/logs/cron_sync_' . date('Y-m-d') . '.log');
-function write_log(string $message): void {
+
+// --- 3. 尝试获取文件锁 ---
+if (!flock($lockHandle, LOCK_EX | LOCK_NB)) {
+    echo "另一个同步进程正在运行，脚本退出。\n";
+    exit(1);
+}
+
+// --- 4. 增强的日志和进度输出函数 ---
+function write_log(string $message, bool $display = true): void {
+    $logDir = __DIR__ . '/logs';
+    if (!is_dir($logDir)) {
+        mkdir($logDir, 0755, true);
+    }
     $timestamp = date('Y-m-d H:i:s');
-    file_put_contents(LOG_FILE, "[{$timestamp}] {$message}\n", FILE_APPEND);
+    $logFile = $logDir . '/cron_sync_' . date('Y-m-d') . '.log';
+    file_put_contents($logFile, "[{$timestamp}] {$message}\n", FILE_APPEND);
+
+    // 如果$display为true，则同时在命令行输出
+    if ($display) {
+        echo "[{$timestamp}] {$message}\n";
+    }
 }
 
-
-// 引入必要文件
+// --- 5. 初始化 ---
 require_once __DIR__ . '/config.php';
 use AlibabaCloud\SDK\Vod\V20170321\Models\SearchMediaRequest;
 
-// 检查数据库连接
 $pdo = Database::getConnection();
 if (!$pdo) {
-    write_log("致命错误: 数据库配置未找到或不正确。请先通过浏览器运行 install.php。");
-    exit; // 严重问题，直接退出
+    write_log("致命错误: 数据库连接失败。");
+    exit(1);
 }
 
-// 检查VOD客户端
 $vodClient = AliyunVodClientFactory::createClient();
 if (!$vodClient) {
-    write_log("致命错误: 创建VOD客户端失败，请检查配置文件中的阿里云密钥。");
-    exit; // 严重问题，直接退出
+    write_log("致命错误: 阿里云VOD客户端创建失败。");
+    exit(1);
 }
 
-
-write_log("===== 开始使用 SearchMedia 进行全量同步 =====");
-
+// --- 6. 主逻辑 ---
+write_log("===== 开始同步视频 (按 Ctrl+C 可安全退出) =====");
 $scrollToken = null;
-$pageSize = 100; // 每次API调用获取的数量
+$pageSize = 100;
 $totalSynced = 0;
 $totalFailed = 0;
 $page = 1;
 
 do {
-    $currentVideoId = 'N/A'; // 用于记录当前处理的视频ID，方便排错
     try {
         write_log("正在获取第 " . $page++ . " 批数据...");
         
         $request = new SearchMediaRequest([
-            'pageSize' => $pageSize,
-            'sortBy' => 'CreationTime:Desc' 
+            'pageSize'    => $pageSize,
+            'sortBy'      => 'CreationTime:Desc',
+            'returnFields' => 'VideoId,Title,CoverURL,Duration,CreationTime'
         ]);
         
         if ($scrollToken) {
@@ -66,36 +91,32 @@ do {
         $pageMediaCount = count($mediaList);
 
         if ($pageMediaCount > 0) {
-            // 使用事务确保数据一致性
+            write_log("成功获取 {$pageMediaCount} 条数据，开始写入数据库...");
             $pdo->beginTransaction();
             $stmt = $pdo->prepare(
                 "INSERT INTO videos (video_id, title, cover_url, duration, creation_time)
                  VALUES (:video_id, :title, :cover_url, :duration, :creation_time)
                  ON DUPLICATE KEY UPDATE
-                   title = VALUES(title),
-                   cover_url = VALUES(cover_url),
-                   duration = VALUES(duration),
-                   creation_time = VALUES(creation_time)"
+                   title = VALUES(title), cover_url = VALUES(cover_url),
+                   duration = VALUES(duration), creation_time = VALUES(creation_time)"
             );
-
+            
+            // 显示进度条
+            $processedCount = 0;
             foreach ($mediaList as $media) {
-                // --- 增强3：更强的错误容忍度 ---
-                // 将try-catch移入循环内部，单个视频失败不影响整体
+                // ... (内部错误处理逻辑保持不变) ...
+                $processedCount++;
+                $percentage = round(($processedCount / $pageMediaCount) * 100);
+                printf("  -> 处理中: [%-50s] %d%% (%d/%d)\r", str_repeat("=", $percentage / 2), $percentage, $processedCount, $pageMediaCount);
+
                 try {
                     if (!isset($media->video) || !isset($media->video->videoId)) {
-                        write_log("警告: 收到一条无效的媒体数据，已跳过。");
                         continue;
                     }
-
                     $video = $media->video;
-                    $currentVideoId = $video->videoId;
-
-                    $creationTime = !empty($video->creationTime) 
-                        ? str_replace(['T', 'Z'], ' ', $video->creationTime) 
-                        : null;
-
+                    $creationTime = !empty($video->creationTime) ? str_replace(['T', 'Z'], ' ', $video->creationTime) : null;
                     $stmt->execute([
-                        ':video_id' => $currentVideoId,
+                        ':video_id' => $video->videoId,
                         ':title' => $video->title,
                         ':cover_url' => $video->coverURL,
                         ':duration' => !empty($video->duration) && is_numeric($video->duration) ? (float)$video->duration : 0,
@@ -103,36 +124,35 @@ do {
                     ]);
                 } catch (Exception $e) {
                     $totalFailed++;
-                    // 记录单条视频处理失败的日志，然后继续处理下一条
-                    write_log("错误: 处理 videoId: {$currentVideoId} 时失败 - " . $e->getMessage());
-                    continue; // 继续下一个循环
+                    // 写入日志但不显示在主进度上
+                    write_log("错误: 处理 videoId: {$video->videoId} 失败 - " . $e->getMessage(), false); 
+                    continue;
                 }
             }
             $pdo->commit();
-            $totalSynced += ($pageMediaCount - $totalFailed); // 减去本页失败的数量
+            echo "\n"; // 进度条结束后换行
+            $totalSynced += ($pageMediaCount - $totalFailed);
+        } else {
+            write_log("未获取到更多数据。");
         }
         
         $scrollToken = $response->body->scrollToken ?? null;
-
-        // 如果还有下一页，稍微等待一下，避免API调用过于频繁
         if ($scrollToken) {
+            write_log("等待1秒后获取下一批...");
             sleep(1); 
         }
 
     } catch (Exception $e) {
-        // 这个catch块处理API调用、数据库连接等全局性的大问题
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
-        write_log("严重错误: 在获取分页数据时出错 (当前VideoId: {$currentVideoId}) - " . $e->getMessage());
-        break; // 出现严重错误，中断整个同步过程
+        write_log("严重错误: 同步过程中断 - " . $e->getMessage());
+        break; 
     }
 } while ($scrollToken);
 
-write_log("同步完成！本次成功处理 {$totalSynced} 条，失败 {$totalFailed} 条视频数据。");
+write_log("同步完成！成功处理: {$totalSynced} 条，失败: {$totalFailed} 条。");
 write_log("===== 同步任务结束 =====");
 
-
-// --- 增强1（后续）：脚本结束时，释放文件锁 ---
-flock($lockHandle, LOCK_UN);
-fclose($lockHandle);
+// 脚本正常结束，清理函数 register_shutdown_function 依然会自动执行
+exit(0);

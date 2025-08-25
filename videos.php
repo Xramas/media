@@ -1,13 +1,11 @@
 <?php
-// 文件: videos.php (更新后)
+// 文件: videos.php (修复后)
 
-// 步骤1：替换 config.php 为 init.php
-require_once __DIR__ . '/_includes/init.php'; 
-// 引入页头。注意：init.php 必须在 header.php 之前，因为 init.php 可能需要执行 header() 重定向
+// !! 关键修复：将引用从已删除的 init.php 改为新的 config.php !!
+require_once __DIR__ . '/config.php'; 
+
+// 在 config.php 之后加载页头
 require_once __DIR__ . '/_includes/header.php';
-
-// 步骤2：移除旧的数据库连接检查，因为 init.php 已经处理了
-// if (!$pdo) { ... } 这段代码被彻底删除
 
 // --- 辅助函数 (保持不变) ---
 function formatDuration(float $seconds): string {
@@ -32,23 +30,29 @@ function renderPagination(int $currentPage, int $totalPages): void {
     echo '</ul></nav>';
 }
 
+// --- 主要逻辑 ---
+// 从 config.php 中获取数据库连接
+$pdo = Database::getConnection();
 
-// --- 主要逻辑 (保持不变) ---
-$pageSize = 20;
-$currentPage = isset($_GET['page']) ? (int)$_GET['page'] : 1;
-if ($currentPage < 1) { $currentPage = 1; }
+// 如果数据库连接失败，页面会显示空白，但错误会记录在 logs/php_errors.log 中
+if (!$pdo) {
+    // 您可以选择在这里显示一个友好的错误信息
+    echo "<div class='container'><p>错误：无法连接到数据库，请检查配置或联系管理员。</p></div>";
+} else {
+    $pageSize = 20;
+    $currentPage = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+    if ($currentPage < 1) { $currentPage = 1; }
 
-$totalVideos = $pdo->query("SELECT count(*) FROM videos")->fetchColumn();
-$totalPages = ceil($totalVideos / $pageSize);
-$offset = ($currentPage - 1) * $pageSize;
+    $totalVideos = $pdo->query("SELECT count(*) FROM videos")->fetchColumn();
+    $totalPages = ceil($totalVideos / $pageSize);
+    $offset = ($currentPage - 1) * $pageSize;
 
-$stmt = $pdo->prepare("SELECT * FROM videos ORDER BY creation_time DESC LIMIT :limit OFFSET :offset");
-$stmt->bindValue(':limit', $pageSize, PDO::PARAM_INT);
-$stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
-$stmt->execute();
-$videoList = $stmt->fetchAll(PDO::FETCH_OBJ);
+    $stmt = $pdo->prepare("SELECT * FROM videos ORDER BY creation_time DESC LIMIT :limit OFFSET :offset");
+    $stmt->bindValue(':limit', $pageSize, PDO::PARAM_INT);
+    $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $stmt->execute();
+    $videoList = $stmt->fetchAll(PDO::FETCH_OBJ);
 
-$errorMessage = '';
 ?>
 <title>视频列表 (第 <?php echo $currentPage; ?> 页) - 我的视频网站</title>
 
@@ -85,5 +89,8 @@ $errorMessage = '';
 
     <?php renderPagination($currentPage, $totalPages); ?>
 </div>
+<?php
+} // 结束 else 数据库连接成功
 
-<?php require_once __DIR__ . '/_includes/footer.php'; ?>
+require_once __DIR__ . '/_includes/footer.php';
+?>
